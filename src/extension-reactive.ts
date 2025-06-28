@@ -201,8 +201,25 @@ export = defineExtension(() => {
     }
   })
   
-  // 监听编辑器选择变化
+  // 监听编辑器选择变化和文档编辑
   const currentSelections = ref<readonly vscode.Selection[]>([])
+  const isEditing = ref(false)
+  const lastEditTime = ref(0)
+  
+  // 监听文档变化，检测编辑状态
+  useDisposable(vscode.workspace.onDidChangeTextDocument((e) => {
+    if (e.document === activeEditor.value?.document) {
+      isEditing.value = true
+      lastEditTime.value = Date.now()
+      
+      // 500ms 后重置编辑状态
+      setTimeout(() => {
+        if (Date.now() - lastEditTime.value >= 500) {
+          isEditing.value = false
+        }
+      }, 500)
+    }
+  }))
   
   useDisposable(vscode.window.onDidChangeTextEditorSelection((e) => {
     if (e.textEditor === activeEditor.value) {
@@ -262,10 +279,16 @@ export = defineExtension(() => {
   // 优化的点击检测和切换逻辑
   let lastClickTime = 0
   let lastClickPosition: vscode.Position | null = null
+  let clickTimeout: NodeJS.Timeout | null = null
   
   watchEffect(() => {
     const selections = currentSelections.value
     const items = translationItems.value
+    
+    // 如果正在编辑，不处理点击切换
+    if (isEditing.value) {
+      return
+    }
     
     if (selections.length === 1 && selections[0].isEmpty) {
       const clickPosition = selections[0].start
@@ -276,19 +299,32 @@ export = defineExtension(() => {
         lastClickPosition.line === clickPosition.line && 
         lastClickPosition.character === clickPosition.character
       
-      if (!isSamePosition || currentTime - lastClickTime > 100) {
-        lastClickTime = currentTime
-        lastClickPosition = clickPosition
-        
-        // 查找点击位置对应的翻译项
-        for (const item of items) {
-          if (item.range.contains(clickPosition)) {
-            const currentState = translationStates.value.get(item.stateKey) ?? true
-            translationStates.value.set(item.stateKey, !currentState)
-            console.log(`Toggled translation for key "${item.key}" to ${!currentState}`)
-            break
-          }
+      // 增加时间间隔，避免编辑时的误触发
+      if (!isSamePosition || currentTime - lastClickTime > 300) {
+        // 清除之前的延迟处理
+        if (clickTimeout) {
+          clearTimeout(clickTimeout)
         }
+        
+        // 延迟处理点击，确保不是编辑引起的选择变化
+        clickTimeout = setTimeout(() => {
+          // 再次检查是否还在编辑状态
+          if (!isEditing.value) {
+            lastClickTime = currentTime
+            lastClickPosition = clickPosition
+            
+            // 查找点击位置对应的翻译项
+            for (const item of items) {
+              if (item.range.contains(clickPosition)) {
+                const currentState = translationStates.value.get(item.stateKey) ?? true
+                translationStates.value.set(item.stateKey, !currentState)
+                console.log(`Toggled translation for key "${item.key}" to ${!currentState}`)
+                break
+              }
+            }
+          }
+          clickTimeout = null
+        }, 200) // 200ms 延迟
       }
     }
   })
