@@ -2,15 +2,15 @@
   "publisher": "chenxc",
   "name": "i18n-inline-translation",
   "displayName": "I18n Inline Translation",
-  "version": "0.1.3",
+  "version": "0.2.1",
   "description": "Smart internationalization plugin with inline translation display, intelligent editing, hover hints, and auto-completion for Vue, React, and JavaScript projects",
   "repository": {
     "type": "git",
-    "url": "https://github.com/your-username/i18n-inline-translation.git"
+    "url": "https://github.com/kiritoko1029/vscode-i18n-plugin.git"
   },
-  "homepage": "https://github.com/your-username/i18n-inline-translation#readme",
+  "homepage": "https://github.com/kiritoko1029/vscode-i18n-plugin#readme",
   "bugs": {
-    "url": "https://github.com/your-username/i18n-inline-translation/issues"
+    "url": "https://github.com/kiritoko1029/vscode-i18n-plugin/issues"
   },
   "license": "MIT",
   "keywords": [
