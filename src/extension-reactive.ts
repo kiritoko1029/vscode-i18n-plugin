@@ -34,11 +34,15 @@ const {
   enableInlineTranslation: Boolean
 })
 
-export = defineExtension(() => {
+// Reactive 扩展定义
+const reactiveExtension = defineExtension(() => {
   console.warn('MPLAT I18n Plugin (Reactive) is now active!')
+  console.log('Extension activation time:', new Date().toISOString())
 
-  // 创建 i18n 服务实例
-  const i18nService = ref(new I18nService())
+  try {
+    // 创建 i18n 服务实例
+    const i18nService = ref(new I18nService())
+    console.log('I18n service created successfully')
   
   // 支持的文件类型
   const supportedLanguages = ['typescript', 'javascript', 'vue']
@@ -117,7 +121,7 @@ export = defineExtension(() => {
     }
   })
 
-  // ========== Completion Provider ==========
+  // ========== Enhanced Completion Provider ==========
   watchEffect(() => {
     if (enableCompletion.value) {
       const completionProvider = vscode.languages.registerCompletionItemProvider(
@@ -127,50 +131,140 @@ export = defineExtension(() => {
             const line = document.lineAt(position)
             const textBeforeCursor = line.text.substring(0, position.character)
 
-            // 检查是否在 $t 或 t 函数的字符串参数中
-            const tFunctionMatch = textBeforeCursor.match(/(?:\$t|\.t)\s*\(\s*['"`]([^'"`]*)$/)
-            if (!tFunctionMatch) {
+            // 扩展的 t 函数匹配模式，支持更多调用形式
+            const tFunctionPatterns = [
+              /(?:\$t|\.t|^t|[\s({,]t|this\.t|i18n\.t)\s*\(\s*['"`]([^'"`]*)$/,  // 基本模式
+              /(?:translate|trans)\s*\(\s*['"`]([^'"`]*)$/,  // 其他翻译函数
+            ]
+
+            let partialKey = ''
+            let matchFound = false
+
+            for (const pattern of tFunctionPatterns) {
+              const match = textBeforeCursor.match(pattern)
+              if (match) {
+                partialKey = match[1] || ''
+                matchFound = true
+                break
+              }
+            }
+
+            if (!matchFound) {
               return null
             }
 
-            const partialKey = tFunctionMatch[1]
             const allKeys = i18nService.value.getAllKeys()
 
-            // 过滤匹配的键
-            const matchingKeys = allKeys.filter(key =>
-              key.toLowerCase().includes(partialKey.toLowerCase())
-            )
+            // 智能匹配算法
+            const matchingKeys = allKeys.filter(key => {
+              const keyLower = key.toLowerCase()
+              const partialLower = partialKey.toLowerCase()
+              
+              // 1. 精确前缀匹配（最高优先级）
+              if (keyLower.startsWith(partialLower)) return true
+              
+              // 2. 包含匹配
+              if (keyLower.includes(partialLower)) return true
+              
+              // 3. 层级匹配（如输入 user 匹配 user.name）
+              if (partialKey && key.includes('.')) {
+                const keyParts = key.split('.')
+                return keyParts.some(part => part.toLowerCase().startsWith(partialLower))
+              }
+              
+              // 4. 模糊匹配（字符序列匹配）
+              if (partialKey.length >= 2) {
+                let keyIndex = 0
+                for (let i = 0; i < partialLower.length; i++) {
+                  keyIndex = keyLower.indexOf(partialLower[i], keyIndex)
+                  if (keyIndex === -1) return false
+                  keyIndex++
+                }
+                return true
+              }
+              
+              return false
+            })
 
-            // 创建补全项
-            return matchingKeys.map((key) => {
-              const item = new vscode.CompletionItem(key, vscode.CompletionItemKind.Property)
+            // 限制结果数量以提高性能
+            const limitedKeys = matchingKeys.slice(0, 50)
+
+            // 创建增强的补全项
+            return limitedKeys.map((key, index) => {
+              const item = new vscode.CompletionItem(key, vscode.CompletionItemKind.Constant)
 
               // 获取翻译预览
               const translation = i18nService.value.getTranslation(key)
               if (translation) {
-                item.detail = translation.value
-                item.documentation = new vscode.MarkdownString(
-                  `**Translation**: ${translation.value}\n\n` +
-                  `**Locale**: ${translation.locale}\n\n${
-                    translation.interpolationKeys.length > 0
-                      ? `**Interpolation**: ${translation.interpolationKeys.join(', ')}`
-                      : ''
-                  }`
-                )
+                // 设置详细信息（显示在补全项右侧）
+                item.detail = `${translation.value.slice(0, 50)}${translation.value.length > 50 ? '...' : ''}`
+                
+                // 设置文档（显示在补全弹窗中）
+                const docs = new vscode.MarkdownString()
+                docs.isTrusted = true
+                docs.appendMarkdown(`**🌍 Translation**\n\n`)
+                docs.appendMarkdown(`\`${translation.value}\`\n\n`)
+                docs.appendMarkdown(`**📋 Details**\n\n`)
+                docs.appendMarkdown(`• **Key**: \`${key}\`\n`)
+                docs.appendMarkdown(`• **Locale**: \`${translation.locale}\`\n`)
+                
+                if (translation.interpolationKeys.length > 0) {
+                  docs.appendMarkdown(`• **Parameters**: \`${translation.interpolationKeys.join(', ')}\`\n`)
+                  docs.appendMarkdown(`\n**💡 Usage Example**\n\n`)
+                  const exampleParams = translation.interpolationKeys.map(k => `${k}: 'value'`).join(', ')
+                  docs.appendMarkdown(`\`\`\`typescript\nt('${key}', { ${exampleParams} })\n\`\`\``)
+                } else {
+                  docs.appendMarkdown(`\n**💡 Usage Example**\n\n`)
+                  docs.appendMarkdown(`\`\`\`typescript\nt('${key}')\n\`\`\``)
+                }
+                
+                item.documentation = docs
+                
+                // 设置插入文本（支持参数补全）
+                if (translation.interpolationKeys.length > 0) {
+                  const snippetParams = translation.interpolationKeys.map((k, i) => `\${${i + 2}:${k}}`).join(', ')
+                  item.insertText = new vscode.SnippetString(`${key}\$1, { ${snippetParams} }`)
+                } else {
+                  item.insertText = key
+                }
+              } else {
+                item.detail = 'Translation not found'
+                item.insertText = key
               }
 
-              // 设置排序权重
-              if (key.toLowerCase().startsWith(partialKey.toLowerCase())) {
-                item.sortText = `0_${key}`
+              // 智能排序权重
+              const keyLower = key.toLowerCase()
+              const partialLower = partialKey.toLowerCase()
+              
+              let sortWeight = 50 // 默认权重
+              
+              if (keyLower === partialLower) {
+                sortWeight = 10 // 完全匹配
+              } else if (keyLower.startsWith(partialLower)) {
+                sortWeight = 20 // 前缀匹配
+              } else if (keyLower.includes(partialLower)) {
+                sortWeight = 30 // 包含匹配
               } else {
-                item.sortText = `1_${key}`
+                sortWeight = 40 // 模糊匹配
+              }
+              
+              // 考虑键的长度（短的更优先）
+              sortWeight += Math.min(key.length / 10, 10)
+              
+              item.sortText = `${sortWeight.toString().padStart(2, '0')}_${key}`
+              
+              // 设置图标
+              if (translation?.interpolationKeys && translation.interpolationKeys.length > 0) {
+                item.kind = vscode.CompletionItemKind.Function // 有参数的显示为函数
+              } else {
+                item.kind = vscode.CompletionItemKind.Constant // 无参数的显示为常量
               }
 
               return item
             })
           }
         },
-        "'", '"', '`'
+        "'", '"', '`'  // 触发字符
       )
       
       useDisposable(completionProvider)
@@ -181,45 +275,8 @@ export = defineExtension(() => {
 
   // ========== Inline Translation Decorations ==========
   
-  // 翻译状态管理：存储每个位置的显示状态
-  const translationStates = ref<Map<string, boolean>>(new Map())
-  
-  // 监听活动编辑器变化，清理状态
-  watch(activeEditor, (newEditor, oldEditor) => {
-    if (newEditor?.document.uri.toString() !== oldEditor?.document.uri.toString()) {
-      // 清理旧文件的状态，保留当前文件的状态
-      const currentUri = newEditor?.document.uri.toString()
-      if (currentUri) {
-        const newStates = new Map<string, boolean>()
-        for (const [key, value] of translationStates.value.entries()) {
-          if (key.startsWith(currentUri)) {
-            newStates.set(key, value)
-          }
-        }
-        translationStates.value = newStates
-      }
-    }
-  })
-  
-  // 监听编辑器选择变化和文档编辑
+  // 监听编辑器选择变化
   const currentSelections = ref<readonly vscode.Selection[]>([])
-  const isEditing = ref(false)
-  const lastEditTime = ref(0)
-  
-  // 监听文档变化，检测编辑状态
-  useDisposable(vscode.workspace.onDidChangeTextDocument((e) => {
-    if (e.document === activeEditor.value?.document) {
-      isEditing.value = true
-      lastEditTime.value = Date.now()
-      
-      // 500ms 后重置编辑状态
-      setTimeout(() => {
-        if (Date.now() - lastEditTime.value >= 500) {
-          isEditing.value = false
-        }
-      }, 500)
-    }
-  }))
   
   useDisposable(vscode.window.onDidChangeTextEditorSelection((e) => {
     if (e.textEditor === activeEditor.value) {
@@ -239,7 +296,6 @@ export = defineExtension(() => {
       range: vscode.Range
       key: string
       translation: string
-      stateKey: string
     }> = []
     const text = document.getText()
     const lines = text.split('\n')
@@ -261,13 +317,11 @@ export = defineExtension(() => {
         const translation = i18nService.value.getTranslation(key)
         if (translation) {
           const range = new vscode.Range(lineIndex, keyStart, lineIndex, keyEnd)
-          const stateKey = `${document.uri.toString()}-${lineIndex}-${keyStart}-${key}`
           
           items.push({
             range,
             key,
-            translation: translation.value,
-            stateKey
+            translation: translation.value
           })
         }
       }
@@ -276,70 +330,45 @@ export = defineExtension(() => {
     return items
   })
 
-  // 优化的点击检测和切换逻辑
-  let lastClickTime = 0
-  let lastClickPosition: vscode.Position | null = null
-  let clickTimeout: NodeJS.Timeout | null = null
-  
-  watchEffect(() => {
-    const selections = currentSelections.value
-    const items = translationItems.value
-    
-    // 如果正在编辑，不处理点击切换
-    if (isEditing.value) {
-      return
-    }
-    
-    if (selections.length === 1 && selections[0].isEmpty) {
-      const clickPosition = selections[0].start
-      const currentTime = Date.now()
-      
-      // 防止重复触发，检查是否是新的点击
-      const isSamePosition = lastClickPosition && 
-        lastClickPosition.line === clickPosition.line && 
-        lastClickPosition.character === clickPosition.character
-      
-      // 增加时间间隔，避免编辑时的误触发
-      if (!isSamePosition || currentTime - lastClickTime > 300) {
-        // 清除之前的延迟处理
-        if (clickTimeout) {
-          clearTimeout(clickTimeout)
-        }
-        
-        // 延迟处理点击，确保不是编辑引起的选择变化
-        clickTimeout = setTimeout(() => {
-          // 再次检查是否还在编辑状态
-          if (!isEditing.value) {
-            lastClickTime = currentTime
-            lastClickPosition = clickPosition
-            
-            // 查找点击位置对应的翻译项
-            for (const item of items) {
-              if (item.range.contains(clickPosition)) {
-                const currentState = translationStates.value.get(item.stateKey) ?? true
-                translationStates.value.set(item.stateKey, !currentState)
-                console.log(`Toggled translation for key "${item.key}" to ${!currentState}`)
-                break
-              }
-            }
-          }
-          clickTimeout = null
-        }, 200) // 200ms 延迟
-      }
-    }
-  })
-
-  // 计算需要隐藏的装饰
+  // 基于选择的自动显示/隐藏逻辑（参照 PNPM Catalog Lens）
   const hiddenDecorations = computed(() => {
-    return translationItems.value
-      .filter(item => translationStates.value.get(item.stateKey) !== false)
+    const items = translationItems.value
+    const selections = currentSelections.value
+    
+    return items
+      .filter(item => {
+        // 检查是否有选择范围与翻译范围重叠
+        for (const selection of selections) {
+          if (selection.contains(item.range) || 
+              item.range.contains(selection.start) || 
+              item.range.contains(selection.end) ||
+              selection.intersection(item.range)) {
+            return false // 有重叠时不隐藏原文本
+          }
+        }
+        return true // 无重叠时隐藏原文本，显示翻译
+      })
       .map(item => ({ range: item.range }))
   })
 
-  // 计算需要显示的装饰
+  // 计算需要显示翻译的装饰
   const displayDecorations = computed(() => {
-    return translationItems.value
-      .filter(item => translationStates.value.get(item.stateKey) !== false)
+    const items = translationItems.value
+    const selections = currentSelections.value
+    
+    return items
+      .filter(item => {
+        // 检查是否有选择范围与翻译范围重叠
+        for (const selection of selections) {
+          if (selection.contains(item.range) || 
+              item.range.contains(selection.start) || 
+              item.range.contains(selection.end) ||
+              selection.intersection(item.range)) {
+            return false // 有重叠时不显示翻译
+          }
+        }
+        return true // 无重叠时显示翻译
+      })
       .map(item => ({
         range: item.range,
         renderOptions: {
@@ -433,5 +462,30 @@ export = defineExtension(() => {
     return new vscode.Hover(content)
   }
 
+  } catch (error) {
+    console.error('MPLAT I18n Plugin initialization error:', error)
+    vscode.window.showErrorMessage(`MPLAT I18n Plugin failed to initialize: ${error}`)
+  }
+})
 
-}) 
+// 传统的激活函数（向后兼容）
+export function activate(context: vscode.ExtensionContext) {
+  console.log('MPLAT I18n Plugin: Traditional activate function called')
+  try {
+    const result = reactiveExtension.activate(context)
+    console.log('Reactive extension activated successfully')
+    return result
+  } catch (error) {
+    console.error('Failed to activate reactive extension:', error)
+    vscode.window.showErrorMessage(`MPLAT I18n Plugin activation failed: ${error}`)
+  }
+}
+
+export function deactivate() {
+  console.log('MPLAT I18n Plugin: Deactivating...')
+  try {
+    reactiveExtension.deactivate?.()
+  } catch (error) {
+    console.error('Failed to deactivate:', error)
+  }
+}

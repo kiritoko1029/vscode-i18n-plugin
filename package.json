@@ -1,15 +1,29 @@
 {
-  "publisher": "mplatform",
-  "name": "mplat-i18n-support",
-  "displayName": "MPlatform I18n Support",
+  "publisher": "chenxc",
+  "name": "i18n-inline-translation",
+  "displayName": "I18n Inline Translation",
   "version": "0.1.3",
-  "description": "VSCode extension for MPlatform I18n library with hover, go-to-definition, inline translation and completion support",
+  "description": "Smart internationalization plugin with inline translation display, intelligent editing, hover hints, and auto-completion for Vue, React, and JavaScript projects",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/your-username/i18n-inline-translation.git"
+  },
+  "homepage": "https://github.com/your-username/i18n-inline-translation#readme",
+  "bugs": {
+    "url": "https://github.com/your-username/i18n-inline-translation/issues"
+  },
+  "license": "MIT",
   "keywords": [
     "i18n",
     "internationalization",
     "translation",
+    "inline",
     "vue",
-    "typescript"
+    "react",
+    "typescript",
+    "javascript",
+    "hover",
+    "completion"
   ],
   "categories": [
     "Other",
@@ -21,7 +35,10 @@
     "vscode": "^1.74.0"
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onLanguage:typescript",
+    "onLanguage:javascript", 
+    "onLanguage:vue"
   ],
   "contributes": {
     "languages": [
@@ -33,7 +50,7 @@
       }
     ],
     "configuration": {
-      "title": "MPlatform I18n",
+      "title": "I18n Inline Translation",
       "properties": {
         "mplat-i18n.autoDiscovery": {
           "type": "boolean",
