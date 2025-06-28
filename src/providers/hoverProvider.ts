@@ -21,9 +21,31 @@ export class I18nHoverProvider implements vscode.HoverProvider {
     // 获取翻译结果
     const translation = this.i18nService.getTranslation(callInfo.key, callInfo.interpolation)
     if (!translation) {
-      return new vscode.Hover(
-        new vscode.MarkdownString(`**Translation not found**\n\nKey: \`${callInfo.key}\``),
-      )
+      const content = new vscode.MarkdownString()
+      content.isTrusted = true
+      
+      content.appendMarkdown(`## ⚠️ 翻译键未找到\n\n`)
+      content.appendMarkdown(`**翻译键**: \`${callInfo.key}\`\n\n`)
+      content.appendMarkdown(`**问题**: 在当前语言包中未找到对应的翻译内容\n\n`)
+      content.appendMarkdown(`**建议**:\n`)
+      content.appendMarkdown(`- 检查翻译键是否拼写正确\n`)
+      content.appendMarkdown(`- 确认语言包文件是否包含此键\n`)
+      content.appendMarkdown(`- 运行 \`mplat-i18n.refreshCache\` 命令刷新缓存\n\n`)
+      
+      // 显示所有可用的翻译键（前10个）
+      const allKeys = this.i18nService.getAllKeys()
+      if (allKeys.length > 0) {
+        content.appendMarkdown(`**可用的翻译键示例** (共${allKeys.length}个):\n`)
+        const sampleKeys = allKeys.slice(0, 10)
+        sampleKeys.forEach(key => {
+          content.appendMarkdown(`- \`${key}\`\n`)
+        })
+        if (allKeys.length > 10) {
+          content.appendMarkdown(`- ... 还有${allKeys.length - 10}个\n`)
+        }
+      }
+      
+      return new vscode.Hover(content)
     }
 
     // 构建 hover 内容

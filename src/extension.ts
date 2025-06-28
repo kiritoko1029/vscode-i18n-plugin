@@ -46,6 +46,9 @@ function initializeProviders(context: vscode.ExtensionContext) {
   inlineTranslationProvider = new InlineTranslationProvider(i18nService)
   codeLensProvider = new I18nCodeLensProvider(i18nService)
 
+  // 防抖刷新缓存的计时器
+  let refreshCacheTimer: NodeJS.Timeout | undefined
+
   // 支持的文件类型
   const documentSelector = [
     { scheme: 'file', language: 'typescript' },
@@ -94,8 +97,8 @@ function initializeProviders(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.workspace.onDidOpenTextDocument((document) => {
         const editor = vscode.window.visibleTextEditors.find(e => e.document === document)
-        if (editor) {
-          inlineTranslationProvider.updateDecorations(editor)
+        if (editor && ['typescript', 'javascript', 'vue'].includes(document.languageId)) {
+          inlineTranslationProvider.forceRefresh(editor)
         }
       }),
     )
@@ -103,19 +106,41 @@ function initializeProviders(context: vscode.ExtensionContext) {
     context.subscriptions.push(
       vscode.workspace.onDidChangeTextDocument((event) => {
         const editor = vscode.window.visibleTextEditors.find(e => e.document === event.document)
-        if (editor) {
-          // 延迟更新，避免频繁刷新
-          setTimeout(() => {
-            inlineTranslationProvider.updateDecorations(editor)
-          }, 500)
+        if (editor && ['typescript', 'javascript', 'vue'].includes(event.document.languageId)) {
+          console.log(`Document changed: ${event.document.uri.toString()}, scheduling debounced refresh`)
+          
+          // 防抖自动刷新缓存和装饰器
+          if (refreshCacheTimer) {
+            clearTimeout(refreshCacheTimer)
+          }
+          
+          refreshCacheTimer = setTimeout(async () => {
+            try {
+              console.log('Starting debounced refresh due to document changes')
+              await i18nService.refreshCache()
+              console.log('Successfully refreshed i18n cache')
+              
+              // 刷新所有UI组件
+              if (vscode.window.activeTextEditor && ['typescript', 'javascript', 'vue'].includes(vscode.window.activeTextEditor.document.languageId)) {
+                console.log('Refreshing inline translation decorations')
+                inlineTranslationProvider.forceRefresh(vscode.window.activeTextEditor)
+              }
+              codeLensProvider.refresh()
+              console.log('Completed debounced refresh')
+            } catch (error) {
+              console.error('Failed to auto-refresh i18n cache:', error)
+            }
+          }, 300) // 300ms防抖延迟，提高响应性
         }
       }),
     )
 
     context.subscriptions.push(
       vscode.window.onDidChangeActiveTextEditor((editor) => {
-        if (editor) {
-          inlineTranslationProvider.updateDecorations(editor)
+        if (editor && ['typescript', 'javascript', 'vue'].includes(editor.document.languageId)) {
+          console.log(`Active editor changed to: ${editor.document.uri.toString()}, force refreshing decorations`)
+          // 切换编辑器时立即刷新是必要的，不与防抖冲突
+          inlineTranslationProvider.forceRefresh(editor)
         }
       }),
     )
@@ -141,8 +166,8 @@ function initializeProviders(context: vscode.ExtensionContext) {
     )
 
     // 初始化当前编辑器
-    if (vscode.window.activeTextEditor) {
-      inlineTranslationProvider.updateDecorations(vscode.window.activeTextEditor)
+    if (vscode.window.activeTextEditor && ['typescript', 'javascript', 'vue'].includes(vscode.window.activeTextEditor.document.languageId)) {
+      inlineTranslationProvider.forceRefresh(vscode.window.activeTextEditor)
     }
   }
 
@@ -150,16 +175,26 @@ function initializeProviders(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('mplat-i18n')) {
+        console.log('Configuration changed, clearing debounce timer and refreshing')
+        // 清理自动刷新计时器，避免冲突
+        if (refreshCacheTimer) {
+          clearTimeout(refreshCacheTimer)
+          refreshCacheTimer = undefined
+        }
+        
         // 刷新缓存
         i18nService.refreshCache()
 
         // 更新内联翻译开关
         const newConfig = vscode.workspace.getConfiguration('mplat-i18n')
-        inlineTranslationProvider.setEnabled(newConfig.get('enableInlineTranslation', false))
+        const enableInlineTranslation = newConfig.get('enableInlineTranslation', false)
+        console.log(`Inline translation enabled: ${enableInlineTranslation}`)
+        inlineTranslationProvider.setEnabled(enableInlineTranslation)
 
-        // 刷新所有装饰和CodeLens
-        if (vscode.window.activeTextEditor) {
-          inlineTranslationProvider.updateDecorations(vscode.window.activeTextEditor)
+        // 强制刷新所有装饰和CodeLens
+        if (vscode.window.activeTextEditor && ['typescript', 'javascript', 'vue'].includes(vscode.window.activeTextEditor.document.languageId)) {
+          console.log('Refreshing decorations due to configuration change')
+          inlineTranslationProvider.forceRefresh(vscode.window.activeTextEditor)
         }
         codeLensProvider.refresh()
       }
@@ -168,15 +203,30 @@ function initializeProviders(context: vscode.ExtensionContext) {
 
   // 注册手动刷新命令
   context.subscriptions.push(
-    vscode.commands.registerCommand('mplat-i18n.refreshCache', () => {
-      i18nService.refreshCache()
-      vscode.window.showInformationMessage('I18n cache refreshed!')
-
-      // 刷新装饰和CodeLens
-      if (vscode.window.activeTextEditor) {
-        inlineTranslationProvider.updateDecorations(vscode.window.activeTextEditor)
+    vscode.commands.registerCommand('mplat-i18n.refreshCache', async () => {
+      console.log('Manual refresh command triggered')
+      // 清理自动刷新计时器，避免冲突
+      if (refreshCacheTimer) {
+        clearTimeout(refreshCacheTimer)
+        refreshCacheTimer = undefined
+        console.log('Cleared pending debounce timer')
       }
-      codeLensProvider.refresh()
+      
+      try {
+        await i18nService.refreshCache()
+        console.log('Manual cache refresh completed')
+        vscode.window.showInformationMessage('I18n cache refreshed!')
+
+        // 强制刷新装饰和CodeLens
+        if (vscode.window.activeTextEditor && ['typescript', 'javascript', 'vue'].includes(vscode.window.activeTextEditor.document.languageId)) {
+          console.log('Refreshing decorations after manual refresh')
+          inlineTranslationProvider.forceRefresh(vscode.window.activeTextEditor)
+        }
+        codeLensProvider.refresh()
+      } catch (error) {
+        console.error('Manual refresh failed:', error)
+        vscode.window.showErrorMessage('Failed to refresh I18n cache')
+      }
     }),
   )
 
@@ -189,6 +239,16 @@ function initializeProviders(context: vscode.ExtensionContext) {
 
   // 添加到清理列表
   context.subscriptions.push(inlineTranslationProvider)
+  
+  // 清理计时器
+  context.subscriptions.push({
+    dispose: () => {
+      if (refreshCacheTimer) {
+        clearTimeout(refreshCacheTimer)
+        refreshCacheTimer = undefined
+      }
+    }
+  })
 }
 
 export function deactivate() {

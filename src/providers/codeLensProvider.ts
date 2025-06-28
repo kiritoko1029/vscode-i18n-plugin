@@ -43,21 +43,29 @@ export class I18nCodeLensProvider implements vscode.CodeLensProvider {
       // eslint-disable-next-line no-cond-assign
       while ((match = tFunctionRegex.exec(line)) !== null) {
         const key = match[1]
+        const range = new vscode.Range(lineIndex, 0, lineIndex, 0)
 
         // 获取翻译
         const translation = this.i18nService.getTranslation(key)
+        
+        const codeLens: TranslationCodeLens = new vscode.CodeLens(range) as TranslationCodeLens
+        
         if (translation) {
-          const range = new vscode.Range(lineIndex, 0, lineIndex, 0)
-
-          const codeLens: TranslationCodeLens = new vscode.CodeLens(range) as TranslationCodeLens
           codeLens.translationData = {
             key,
             translation: translation.value,
             isShowingTranslation: true,
           }
-
-          codeLenses.push(codeLens)
+        } else {
+          // 未找到翻译的情况
+          codeLens.translationData = {
+            key,
+            translation: '⚠️ 翻译未找到',
+            isShowingTranslation: false, // 用于区分错误状态
+          }
         }
+
+        codeLenses.push(codeLens)
       }
     }
 
@@ -69,6 +77,16 @@ export class I18nCodeLensProvider implements vscode.CodeLensProvider {
   resolveCodeLens(codeLens: vscode.CodeLens): vscode.CodeLens | Thenable<vscode.CodeLens> {
     const translationCodeLens = codeLens as TranslationCodeLens
     const { key, translation, isShowingTranslation } = translationCodeLens.translationData
+
+    // 检查是否是错误状态（翻译未找到）
+    if (translation === '⚠️ 翻译未找到') {
+      codeLens.command = {
+        title: `❌ ${key} - 翻译未找到`,
+        command: 'mplat-i18n.refreshCache', // 点击时刷新缓存
+        arguments: [],
+      }
+      return codeLens
+    }
 
     if (isShowingTranslation) {
       codeLens.command = {
@@ -93,8 +111,11 @@ export class I18nCodeLensProvider implements vscode.CodeLensProvider {
     for (const [, codeLenses] of this.codeLensCache.entries()) {
       for (const codeLens of codeLenses) {
         if (codeLens.range.isEqual(range) && codeLens.translationData.key === key) {
-          codeLens.translationData.isShowingTranslation = !codeLens.translationData.isShowingTranslation
-          this._onDidChangeCodeLenses.fire()
+          // 只有非错误状态的才能切换
+          if (codeLens.translationData.translation !== '⚠️ 翻译未找到') {
+            codeLens.translationData.isShowingTranslation = !codeLens.translationData.isShowingTranslation
+            this._onDidChangeCodeLenses.fire()
+          }
           return
         }
       }

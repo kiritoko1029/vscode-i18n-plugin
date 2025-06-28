@@ -61,6 +61,21 @@ const reactiveExtension = defineExtension(() => {
     return activeEditor.value && supportedLanguages.includes(activeEditor.value.document.languageId)
   })
 
+  // 文档版本计数器，用于触发内联翻译重新计算
+  const documentVersion = ref(0)
+  
+  // 监听文档内容变化
+  useDisposable(vscode.workspace.onDidChangeTextDocument((e) => {
+    if (activeEditor.value && e.document === activeEditor.value.document) {
+      documentVersion.value += 1
+    }
+  }))
+  
+  // 监听编辑器切换，也需要触发更新
+  watch(activeEditor, () => {
+    documentVersion.value += 1
+  })
+
   // ========== Hover Provider ==========
   watchEffect(() => {
     if (enableHover.value) {
@@ -286,6 +301,9 @@ const reactiveExtension = defineExtension(() => {
 
   // 计算所有可翻译的位置和内容
   const translationItems = computed(() => {
+    // 依赖文档版本以响应内容变化
+    documentVersion.value; // 触发响应式依赖
+    
     if (!enableInlineTranslation.value || !isCurrentEditorSupported.value || !activeEditor.value) {
       return []
     }
